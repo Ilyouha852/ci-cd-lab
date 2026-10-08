@@ -1,10 +1,40 @@
 pipeline {
     agent any
+
     stages {
-        stage('Checkout') { steps { checkout scm } }
-        stage('Build') { steps { bat 'py -m pip install -r requirements.txt' } }
-        stage('Test') { steps { bat 'py -m pytest -v' } }
-        stage('Deploy') { steps { echo 'Deploy: приложение прошло сборку и тестирование.'; echo 'Для локального запуска: py app.py' } }
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Install dependencies') {
+            steps {
+                bat 'python -m pip install --upgrade pip'
+                bat 'pip install -r requirements.txt'
+            }
+        }
+
+        stage('Run tests') {
+            steps {
+                bat 'python -m pytest tests -v'
+            }
+        }
+
+        stage('Build') {
+            steps {
+                bat 'python -m py_compile app.py database.py config.py'
+            }
+        }
     }
-    post { always { echo 'Pipeline completed.' } }
+
+    post {
+        success {
+            echo 'Сборка и тестирование успешно завершены.'
+        }
+
+        failure {
+            echo 'При сборке или тестировании произошла ошибка.'
+        }
+    }
 }
