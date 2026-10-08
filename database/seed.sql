@@ -1,0 +1,7 @@
+INSERT INTO owners(full_name,phone,email,address) VALUES('Иванов Иван Иванович','+7 900 111-11-11','ivanov@example.com','Москва, ул. Ленина, 10'),('Петров Пётр Петрович','+7 900 222-22-22','petrov@example.com','Санкт-Петербург, Невский пр., 20'),('Сидорова Анна Сергеевна','+7 900 333-33-33','sidorova@example.com','Казань, ул. Баумана, 15');
+INSERT INTO brands(name) VALUES('Toyota'),('BMW'),('Lada'),('Honda');
+INSERT INTO models(brand_id,name) VALUES(1,'Camry'),(1,'Mark II'),(2,'M5'),(3,'Vesta'),(4,'Civic');
+INSERT INTO cars(owner_id,brand_id,model_id,registration_number,vin,production_year,color,mileage,status) VALUES(1,1,1,'А123ВС777','JTNB11HK103456789',2022,'Белый',45000,'Активен'),(2,2,3,'В456ЕК777','WBS33AA0012345678',2021,'Черный',38000,'Активен'),(3,3,4,'М789ОР116','XTA21000012345678',2023,'Серебристый',12000,'На ремонте');
+INSERT INTO technical_inspections(car_id,inspection_date,next_inspection_date,result,mileage,comment) VALUES(1,'2026-08-15','2027-08-15','Пройден',44000,'Замечаний нет'),(2,'2026-07-20','2027-07-20','Пройден',37000,'Замечаний нет'),(3,'2026-09-01','2027-09-01','Не пройден',12000,'Требуется ремонт тормозной системы');
+INSERT INTO insurance_policies(car_id,policy_number,insurance_company,start_date,end_date,insurance_type,cost) VALUES(1,'OSAGO-100001','Росгосстрах','2026-01-15','2027-01-14','ОСАГО',8500),(2,'CASCO-200001','Ингосстрах','2026-02-10','2027-02-09','КАСКО',78000),(3,'OSAGO-300001','АльфаСтрахование','2026-03-01','2027-02-28','ОСАГО',9200);
+ 
