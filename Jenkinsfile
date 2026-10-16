@@ -13,10 +13,8 @@ pipeline {
             steps {
                 bat '''
                     whoami
-                    where docker
-                    docker --version
-                    docker compose version
                     docker info
+                    docker run --rm hello-world
                 '''
             }
         }
