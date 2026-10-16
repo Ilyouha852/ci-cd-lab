@@ -2,6 +2,11 @@
 pipeline {
     agent any
 
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+    }
+
     stages {
         stage('Checkout') {
             steps {
@@ -12,16 +17,14 @@ pipeline {
         stage('Docker connectivity check') {
             steps {
                 bat '''
-                    whoami
                     docker info
-                    docker run --rm hello-world
+                    docker compose version
                 '''
             }
         }
 
         stage('Install dependencies') {
             steps {
-                bat 'python -m pip install --upgrade pip'
                 bat 'python -m pip install -r requirements.txt'
             }
         }
@@ -35,67 +38,40 @@ pipeline {
         stage('Build') {
             steps {
                 bat 'python -m py_compile app.py database.py config.py'
+                bat 'docker compose config'
             }
         }
 
-        stage('Deploy application') {
+        stage('Build Docker image') {
+            steps {
+                bat 'docker compose -p caraccounting build'
+            }
+        }
+
+        stage('Deploy with Docker Compose') {
             steps {
                 powershell '''
                     $ErrorActionPreference = "Stop"
+                    Set-Location $env:WORKSPACE
 
-                    $appPath = Join-Path $env:WORKSPACE "app.py"
-                    $logDir = Join-Path $env:WORKSPACE "logs"
-                    $stdoutLog = Join-Path $logDir "app.log"
-                    $stderrLog = Join-Path $logDir "app-error.log"
+                    Write-Host "Starting application and Nginx..."
 
-                    New-Item -ItemType Directory -Force `
-                        -Path $logDir | Out-Null
-
-                    # Находим предыдущий экземпляр приложения
-                    $oldProcesses = Get-CimInstance Win32_Process |
-                        Where-Object {
-                            $_.Name -match '^python(w)?\\.exe$' -and
-                            $_.CommandLine -and
-                            $_.CommandLine.IndexOf(
-                                $appPath,
-                                [StringComparison]::OrdinalIgnoreCase
-                            ) -ge 0
-                        }
-
-                    foreach ($item in $oldProcesses) {
-                        Stop-Process -Id $item.ProcessId -Force
+                    docker compose -p caraccounting up -d --build
+                    if ($LASTEXITCODE -ne 0) {
+                        throw "Docker Compose deployment failed"
                     }
 
-                    Start-Sleep -Seconds 2
+                    Write-Host "Waiting for the website..."
 
-                    # Определяем интерпретатор Python
-                    $python = (Get-Command python.exe).Source
-
-                    # Запускаем Flask в отдельном процессе
-                    $process = Start-Process `
-                        -FilePath $python `
-                        -ArgumentList @("-u", "app.py") `
-                        -WorkingDirectory $env:WORKSPACE `
-                        -RedirectStandardOutput $stdoutLog `
-                        -RedirectStandardError $stderrLog `
-                        -PassThru
-
-                    # Ждём готовности веб-сервера
                     $ready = $false
 
-                    for ($i = 0; $i -lt 20; $i++) {
-                        Start-Sleep -Seconds 1
-
-                        $process.Refresh()
-
-                        if ($process.HasExited) {
-                            break
-                        }
+                    for ($i = 0; $i -lt 30; $i++) {
+                        Start-Sleep -Seconds 2
 
                         try {
                             $response = Invoke-WebRequest `
-                                -Uri "http://127.0.0.1:5000/" `
-                                -TimeoutSec 2 `
+                                -Uri "http://localhost/" `
+                                -TimeoutSec 3 `
                                 -UseBasicParsing
 
                             if ($response.StatusCode -eq 200) {
@@ -104,24 +80,20 @@ pipeline {
                             }
                         }
                         catch {
-                            # Сервер ещё запускается
+                            Write-Host "Website is not ready yet..."
                         }
                     }
 
                     if (-not $ready) {
-                        if ($process.HasExited) {
-                            Write-Host "Application error log:"
-                            if (Test-Path $stderrLog) {
-                                Get-Content $stderrLog
-                            }
-                        }
-
-                        throw "Flask application did not become ready on port 5000"
+                        docker compose -p caraccounting ps
+                        docker compose -p caraccounting logs --tail=100
+                        throw "Website did not become available at http://localhost/"
                     }
 
-                    Write-Host "Application is running."
-                    Write-Host "PID: $($process.Id)"
-                    Write-Host "URL: http://127.0.0.1:5000/"
+                    docker compose -p caraccounting ps
+
+                    Write-Host "Deployment successful."
+                    Write-Host "Website: http://localhost/"
                 '''
             }
         }
@@ -129,10 +101,12 @@ pipeline {
 
     post {
         success {
-            echo 'Сборка завершена. Веб-приложение продолжает работать.'
+            echo 'CI/CD завершён успешно. Приложение запущено в Docker.'
+            echo 'Сайт доступен по адресу http://localhost/'
         }
+
         failure {
-            echo 'Ошибка сборки или запуска приложения. Проверьте логи.'
+            echo 'Ошибка CI/CD. Проверьте логи этапа, завершившегося с ошибкой.'
         }
     }
 }
