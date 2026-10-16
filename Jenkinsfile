@@ -9,6 +9,18 @@ pipeline {
             }
         }
 
+        stage('Docker connectivity check') {
+            steps {
+                bat '''
+                    whoami
+                    where docker
+                    docker --version
+                    docker compose version
+                    docker info
+                '''
+            }
+        }
+
         stage('Install dependencies') {
             steps {
                 bat 'python -m pip install --upgrade pip'
