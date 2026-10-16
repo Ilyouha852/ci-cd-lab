@@ -1,7 +1,7 @@
 from flask import Flask,render_template,request,redirect,url_for,flash
 from config import SECRET_KEY
 from database import get_db,init_db
-
+ 
 ENTITIES={
 'owners':{'title':'Владельцы','table':'owners','columns':['full_name','phone','email','address'],'labels':{'full_name':'ФИО','phone':'Телефон','email':'Email','address':'Адрес'}},
 'brands':{'title':'Марки','table':'brands','columns':['name'],'labels':{'name':'Название марки'}},
