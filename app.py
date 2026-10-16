@@ -68,5 +68,13 @@ def create_app(test_config=None):
         return render_template('car_detail.html',car=car,inspections=inspections,policies=policies)
     return app
 
-app=create_app()
-if __name__=='__main__': init_db(); app.run(host='0.0.0.0',port=5000,debug=True)
+app = create_app()
+
+if __name__ == '__main__':
+    init_db()
+    app.run(
+        host='0.0.0.0',
+        port=5000,
+        debug=False,
+        use_reloader=False
+    )
