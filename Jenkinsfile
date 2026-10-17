@@ -48,6 +48,13 @@ pipeline {
         }
 
         stage('Deploy with Docker Compose') {
+            when {
+                expreesion {
+                    def b = env.GIT_BRANCH ?: env.BRANCH_NAME ?: ''
+                    return b == 'main' || b == 'origin/main' || b == 'refs/heads/main'
+                }
+            }
+            
             steps {
                 powershell '''
                     $ErrorActionPreference = "Stop"
