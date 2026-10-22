@@ -150,6 +150,36 @@ pipeline {
                 '''
             }
         }
+
+        // Публикация образа в Docker Hub: только main и только после успешного
+        // деплоя. Нужны credentials типа "Username with password" с ID dockerhub
+        // (логин Docker Hub + Access Token). Образ: <логин>/car-accounting.
+        stage('Push to Docker Hub') {
+            when {
+                expression { return isMainBranch() }
+            }
+            environment {
+                DOCKERHUB = credentials('dockerhub')
+                IMAGE_REPO = 'car-accounting'
+            }
+            steps {
+                retry(3) {
+                    // Без пробела перед "|": иначе пробел попадёт в пароль.
+                    // "|| exit /b 1" нужен, чтобы bat падал на любой строке, а не только на последней.
+                    bat '''
+                        echo %DOCKERHUB_PSW%| docker login -u %DOCKERHUB_USR% --password-stdin || exit /b 1
+                        docker build -t %DOCKERHUB_USR%/%IMAGE_REPO%:%BUILD_NUMBER% -t %DOCKERHUB_USR%/%IMAGE_REPO%:latest . || exit /b 1
+                        docker push %DOCKERHUB_USR%/%IMAGE_REPO%:%BUILD_NUMBER% || exit /b 1
+                        docker push %DOCKERHUB_USR%/%IMAGE_REPO%:latest || exit /b 1
+                    '''
+                }
+            }
+            post {
+                always {
+                    bat(returnStatus: true, script: 'docker logout')
+                }
+            }
+        }
     }
 
     post {
