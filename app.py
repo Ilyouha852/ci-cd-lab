@@ -3,7 +3,7 @@ from config import SECRET_KEY
 from database import get_db,init_db
  
 ENTITIES={
-'owners':{'title':'Владельцы','table':'owners','columns':['full_name','phone','email','address'],'labels':{'full_name':'ФИО','phone':'Телефон','email':'Email','address':'Адрес'}},
+'owners':{'title':'Владельцы тачек','table':'owners','columns':['full_name','phone','email','address'],'labels':{'full_name':'ФИО','phone':'Телефон','email':'Email','address':'Адрес'}},
 'brands':{'title':'Марки','table':'brands','columns':['name'],'labels':{'name':'Название марки'}},
 'models':{'title':'Модели','table':'models','columns':['brand_id','name'],'labels':{'brand_id':'Марка','name':'Название модели'}},
 'cars':{'title':'Крутые машины','table':'cars','columns':['owner_id','brand_id','model_id','registration_number','vin','production_year','color','mileage','status'],'labels':{'owner_id':'Владелец','brand_id':'Марка','model_id':'Модель','registration_number':'Госномер','vin':'VIN','production_year':'Год выпуска','color':'Цвет','mileage':'Пробег','status':'Статус'}},
