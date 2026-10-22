@@ -1,12 +1,12 @@
 from flask import Flask,render_template,request,redirect,url_for,flash
 from config import SECRET_KEY
 from database import get_db,init_db
-
+ 
 ENTITIES={
 'owners':{'title':'Владельцы','table':'owners','columns':['full_name','phone','email','address'],'labels':{'full_name':'ФИО','phone':'Телефон','email':'Email','address':'Адрес'}},
 'brands':{'title':'Марки','table':'brands','columns':['name'],'labels':{'name':'Название марки'}},
 'models':{'title':'Модели','table':'models','columns':['brand_id','name'],'labels':{'brand_id':'Марка','name':'Название модели'}},
-'cars':{'title':'Машинки','table':'cars','columns':['owner_id','brand_id','model_id','registration_number','vin','production_year','color','mileage','status'],'labels':{'owner_id':'Владелец','brand_id':'Марка','model_id':'Модель','registration_number':'Госномер','vin':'VIN','production_year':'Год выпуска','color':'Цвет','mileage':'Пробег','status':'Статус'}},
+'cars':{'title':'Крутые машины','table':'cars','columns':['owner_id','brand_id','model_id','registration_number','vin','production_year','color','mileage','status'],'labels':{'owner_id':'Владелец','brand_id':'Марка','model_id':'Модель','registration_number':'Госномер','vin':'VIN','production_year':'Год выпуска','color':'Цвет','mileage':'Пробег','status':'Статус'}},
 'inspections':{'title':'Технические осмотры','table':'technical_inspections','columns':['car_id','inspection_date','next_inspection_date','result','mileage','comment'],'labels':{'car_id':'Автомобиль','inspection_date':'Дата','next_inspection_date':'Следующий осмотр','result':'Результат','mileage':'Пробег','comment':'Комментарий'}},
 'insurance':{'title':'Страховые полисы','table':'insurance_policies','columns':['car_id','policy_number','insurance_company','start_date','end_date','insurance_type','cost'],'labels':{'car_id':'Автомобиль','policy_number':'Номер полиса','insurance_company':'Компания','start_date':'Начало','end_date':'Окончание','insurance_type':'Тип','cost':'Стоимость'}}}
 
@@ -68,5 +68,13 @@ def create_app(test_config=None):
         return render_template('car_detail.html',car=car,inspections=inspections,policies=policies)
     return app
 
-app=create_app()
-if __name__=='__main__': init_db(); app.run(host='0.0.0.0',port=5000,debug=True)
+app = create_app()
+
+if __name__ == '__main__':
+    init_db()
+    app.run(
+        host='0.0.0.0',
+        port=5000,
+        debug=False,
+        use_reloader=False
+    )

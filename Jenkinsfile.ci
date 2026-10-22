@@ -1,0 +1,74 @@
+
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+    }
+
+    environment {
+        DOCKER_EXE = 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Check tools') {
+            steps {
+                bat 'python --version'
+                bat '"%DOCKER_EXE%" --version'
+                bat '"%DOCKER_EXE%" compose version'
+            }
+        }
+
+        stage('Install dependencies') {
+            steps {
+                bat 'python -m pip install -r requirements.txt'
+            }
+        }
+
+        stage('Tests') {
+            steps {
+                bat 'python -m pytest tests -v'
+            }
+        }
+
+        stage('Python syntax check') {
+            steps {
+                bat 'python -m py_compile app.py database.py config.py'
+            }
+        }
+
+        stage('Validate Docker Compose') {
+            steps {
+                bat '"%DOCKER_EXE%" compose config -q'
+            }
+        }
+
+        stage('Build Docker image (CI only)') {
+            steps {
+                script {
+                    def branchTag = (env.BRANCH_NAME ?: 'manual')
+                        .toLowerCase()
+                        .replaceAll(/[^a-z0-9_.-]/, '-')
+
+                    env.CI_IMAGE_TAG =
+                        "car-accounting-ci:${branchTag}-${env.BUILD_NUMBER}"
+                }
+
+                bat "\"%DOCKER_EXE%\" build -t \"${env.CI_IMAGE_TAG}\" ."
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'CI completed successfully. Deployment was not performed.'
+        }
+    }
+}
