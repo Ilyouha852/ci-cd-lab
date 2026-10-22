@@ -49,7 +49,7 @@ pipeline {
 
         stage('Deploy with Docker Compose') {
             when {
-                expreesion {
+                expression {
                     def b = env.GIT_BRANCH ?: env.BRANCH_NAME ?: ''
                     return b == 'main' || b == 'origin/main' || b == 'refs/heads/main'
                 }
