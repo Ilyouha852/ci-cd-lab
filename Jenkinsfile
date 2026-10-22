@@ -1,9 +1,30 @@
+// Единый pipeline для всех веток.
+//   * любая ветка, кроме main: установка зависимостей, тесты, проверка и сборка
+//     отдельного CI-образа с уникальным тегом. Деплоя нет, работающее
+//     приложение не затрагивается;
+//   * ветка main: те же проверки + сборка и деплой через Docker Compose.
+//
+// Запускать как Multibranch Pipeline (см. README, раздел "Jenkins").
+
+// main определяется и для Multibranch (BRANCH_NAME), и для обычного
+// Pipeline from SCM (GIT_BRANCH вида origin/main).
+def isMainBranch() {
+    def b = env.BRANCH_NAME ?: env.GIT_BRANCH ?: ''
+    return b == 'main' || b == 'origin/main' || b == 'refs/heads/main'
+}
+
 pipeline {
     agent any
 
     options {
         timestamps()
         disableConcurrentBuilds()
+    }
+
+    triggers {
+        // Jenkins стоит на localhost, GitHub webhook до него не дотянется,
+        // поэтому Jenkins сам раз в пару минут проверяет репозиторий.
+        pollSCM('H/2 * * * *')
     }
 
     stages {
@@ -37,24 +58,50 @@ pipeline {
         stage('Build') {
             steps {
                 bat 'python -m py_compile app.py database.py config.py'
-                bat 'docker compose config'
+                bat 'docker compose config -q'
+            }
+        }
+
+        // Не main: образ с уникальным тегом, чтобы не перезаписать образ
+        // caraccounting-app, который использует развернутое приложение.
+        stage('Build CI Docker image') {
+            when {
+                not {
+                    expression { return isMainBranch() }
+                }
+            }
+            steps {
+                script {
+                    def branchTag = (env.BRANCH_NAME ?: env.GIT_BRANCH ?: 'manual')
+                        .toLowerCase()
+                        .replaceAll(/[^a-z0-9_.-]/, '-')
+
+                    env.CI_IMAGE_TAG = "car-accounting-ci:${branchTag}-${env.BUILD_NUMBER}"
+                }
+
+                // Docker Hub иногда отвечает TLS handshake timeout, поэтому повторы.
+                retry(3) {
+                    bat "docker build -t \"${env.CI_IMAGE_TAG}\" ."
+                }
             }
         }
 
         stage('Build Docker image') {
+            when {
+                expression { return isMainBranch() }
+            }
             steps {
-                bat 'docker compose -p caraccounting build'
+                retry(3) {
+                    bat 'docker compose -p caraccounting build'
+                }
             }
         }
 
         stage('Deploy with Docker Compose') {
             when {
-                expression {
-                    def b = env.GIT_BRANCH ?: env.BRANCH_NAME ?: ''
-                    return b == 'main' || b == 'origin/main' || b == 'refs/heads/main'
-                }
+                expression { return isMainBranch() }
             }
-            
+
             steps {
                 powershell '''
                     $ErrorActionPreference = "Stop"
@@ -106,9 +153,24 @@ pipeline {
     }
 
     post {
+        always {
+            script {
+                // CI-образ нужен только для проверки сборки, не копим их на диске.
+                if (env.CI_IMAGE_TAG) {
+                    bat(returnStatus: true, script: "docker image rm -f \"${env.CI_IMAGE_TAG}\"")
+                }
+            }
+        }
+
         success {
-            echo 'CI/CD завершён успешно. Приложение запущено в Docker.'
-            echo 'Сайт доступен по адресу http://localhost/'
+            script {
+                if (isMainBranch()) {
+                    echo 'CI/CD завершён успешно. Приложение запущено в Docker.'
+                    echo 'Сайт доступен по адресу http://localhost/'
+                } else {
+                    echo 'CI завершён успешно. Деплой не выполнялся: ветка не main.'
+                }
+            }
         }
 
         failure {
