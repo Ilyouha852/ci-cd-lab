@@ -21,6 +21,11 @@ pipeline {
         disableConcurrentBuilds()
     }
 
+    environment {
+        IMAGE_REPO = 'ilyouha/car-accounting'
+        IMAGE_TAG  = "${env.BUILD_NUMBER}"
+    }
+
     triggers {
         // Jenkins стоит на localhost, GitHub webhook до него не дотянется,
         // поэтому Jenkins сам раз в пару минут проверяет репозиторий.
@@ -86,30 +91,40 @@ pipeline {
             }
         }
 
-        stage('Build Docker image') {
-            when {
-                expression { return isMainBranch() }
-            }
-            steps {
-                retry(3) {
-                    bat 'docker compose -p caraccounting build'
-                }
-            }
-        }
-
         stage('Deploy with Docker Compose') {
             when {
                 expression { return isMainBranch() }
             }
 
+            environment {
+                // Jenkins: Credentials -> Username with password
+                // (логин Docker Hub + Access Token), ID = dockerhub-credentials.
+                // Создаёт DOCKERHUB_USR и DOCKERHUB_PSW (в логе маскируются).
+                DOCKERHUB = credentials('dockerhub-credentials')
+            }
+
             steps {
+                // Сборка образа и публикация на Docker Hub.
+                // В bat код возврата берётся только от последней команды,
+                // поэтому после каждой стоит || exit /b 1.
+                retry(2) {
+                    bat '''
+                        @echo off
+                        echo %DOCKERHUB_PSW%| docker login -u %DOCKERHUB_USR% --password-stdin || exit /b 1
+                        docker compose -p caraccounting build app || exit /b 1
+                        docker compose -p caraccounting push app || exit /b 1
+                        docker tag %IMAGE_REPO%:%IMAGE_TAG% %IMAGE_REPO%:latest || exit /b 1
+                        docker push %IMAGE_REPO%:latest || exit /b 1
+                    '''
+                }
+
                 powershell '''
                     $ErrorActionPreference = "Stop"
                     Set-Location $env:WORKSPACE
 
                     Write-Host "Starting application and Nginx..."
 
-                    docker compose -p caraccounting up -d --build
+                    docker compose -p caraccounting up -d
                     if ($LASTEXITCODE -ne 0) {
                         throw "Docker Compose deployment failed"
                     }
@@ -150,41 +165,14 @@ pipeline {
                 '''
             }
         }
-
-        // Публикация образа в Docker Hub: только main и только после успешного
-        // деплоя. Нужны credentials типа "Username with password" с ID dockerhub
-        // (логин Docker Hub + Access Token). Образ: <логин>/car-accounting.
-        stage('Push to Docker Hub') {
-            when {
-                expression { return isMainBranch() }
-            }
-            environment {
-                DOCKERHUB = credentials('dockerhub')
-                IMAGE_REPO = 'car-accounting'
-            }
-            steps {
-                retry(3) {
-                    // Без пробела перед "|": иначе пробел попадёт в пароль.
-                    // "|| exit /b 1" нужен, чтобы bat падал на любой строке, а не только на последней.
-                    bat '''
-                        echo %DOCKERHUB_PSW%| docker login -u %DOCKERHUB_USR% --password-stdin || exit /b 1
-                        docker build -t %DOCKERHUB_USR%/%IMAGE_REPO%:%BUILD_NUMBER% -t %DOCKERHUB_USR%/%IMAGE_REPO%:latest . || exit /b 1
-                        docker push %DOCKERHUB_USR%/%IMAGE_REPO%:%BUILD_NUMBER% || exit /b 1
-                        docker push %DOCKERHUB_USR%/%IMAGE_REPO%:latest || exit /b 1
-                    '''
-                }
-            }
-            post {
-                always {
-                    bat(returnStatus: true, script: 'docker logout')
-                }
-            }
-        }
     }
 
     post {
         always {
             script {
+                if (isMainBranch()) {
+                    bat(returnStatus: true, script: 'docker logout')
+                }
                 // CI-образ нужен только для проверки сборки, не копим их на диске.
                 if (env.CI_IMAGE_TAG) {
                     bat(returnStatus: true, script: "docker image rm -f \"${env.CI_IMAGE_TAG}\"")

@@ -1,6 +1,9 @@
-
 services:
   app:
+    # Имя образа = репозиторий на Docker Hub. `docker compose build` соберёт
+    # образ и сразу присвоит ему это имя, `docker compose push app` отправит его.
+    # Локально (без переменных) получится car-accounting:latest.
+    image: ${IMAGE_REPO:-car-accounting}:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile
