@@ -22,7 +22,7 @@ pipeline {
     }
 
     environment {
-        IMAGE_REPO = 'ilyouha/car-accounting'
+        IMAGE_REPO = 'benjohnson1229/car-accounting'
         IMAGE_TAG  = "${env.BUILD_NUMBER}"
     }
 
