@@ -1,4 +1,5 @@
-from flask import Flask,render_template,request,redirect,url_for,flash
+import socket
+from flask import Flask,render_template,request,redirect,url_for,flash,jsonify
 from config import SECRET_KEY
 from database import get_db,init_db
  
@@ -17,6 +18,25 @@ def options():
 def create_app(test_config=None):
     app=Flask(__name__); app.config.update(SECRET_KEY=SECRET_KEY)
     if test_config: app.config.update(test_config)
+    @app.after_request
+    def add_pod_header(resp):
+        # имя пода, обработавшего запрос (видно балансировку между репликами в Kubernetes)
+        resp.headers['X-Served-By']=socket.gethostname()
+        return resp
+    @app.route('/health')
+    def health():
+        # liveness-проба: процесс жив, БД не трогаем
+        return jsonify(status='ok',pod=socket.gethostname())
+    @app.route('/ready')
+    def ready():
+        # readiness-проба: БД доступна и схема создана
+        try:
+            db=get_db()
+            try: db.execute('SELECT 1 FROM cars LIMIT 1')
+            finally: db.close()
+            return jsonify(status='ready')
+        except Exception:
+            return jsonify(status='db unavailable'),503
     @app.route('/')
     def index():
         with get_db() as db:

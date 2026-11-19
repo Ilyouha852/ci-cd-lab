@@ -18,3 +18,20 @@ def test_owner_and_reference_crud(client):
     assert client.post('/inspections/create',data={'car_id':'1','inspection_date':'2026-10-01','next_inspection_date':'2027-10-01','result':'Пройден','mileage':'46000','comment':'OK'},follow_redirects=True).status_code==200
     assert client.post('/insurance/create',data={'car_id':'1','policy_number':'OSAGO-999999','insurance_company':'Test','start_date':'2026-10-01','end_date':'2027-09-30','insurance_type':'ОСАГО','cost':'10000'},follow_redirects=True).status_code==200
  
+
+
+def test_health_and_ready(client):
+    r=client.get('/health'); assert r.status_code==200; assert r.get_json()['status']=='ok'
+    r=client.get('/ready'); assert r.status_code==200; assert r.get_json()['status']=='ready'
+
+def test_served_by_header(client):
+    assert client.get('/health').headers.get('X-Served-By')
+    assert client.get('/').headers.get('X-Served-By')
+
+def test_ready_fails_without_schema(tmp_path,monkeypatch):
+    import config,database
+    from app import create_app
+    dbfile=tmp_path/'empty.db'; monkeypatch.setattr(config,'DATABASE_PATH',dbfile); monkeypatch.setattr(database,'DATABASE_PATH',dbfile)
+    c=create_app({'TESTING':True,'SECRET_KEY':'test'}).test_client()
+    assert c.get('/health').status_code==200
+    assert c.get('/ready').status_code==503

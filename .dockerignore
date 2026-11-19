@@ -11,3 +11,8 @@ __pycache__
 *.db
 logs
 .env
+k8s
+scripts
+gateway
+smoke_tests
+reports

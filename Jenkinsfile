@@ -2,7 +2,8 @@
 //   * любая ветка, кроме main: установка зависимостей, тесты, проверка и сборка
 //     отдельного CI-образа с уникальным тегом. Деплоя нет, работающее
 //     приложение не затрагивается;
-//   * ветка main: те же проверки + сборка и деплой через Docker Compose.
+//   * ветка main: те же проверки + сборка и деплой через Docker Compose,
+//     затем сборка образов, деплой в Kubernetes (minikube) и smoke-тест через gateway.
 //
 // Запускать как Multibranch Pipeline (см. README, раздел "Jenkins").
 
@@ -165,6 +166,75 @@ pipeline {
                 '''
             }
         }
+
+        // Kubernetes (minikube): только main. Требования к агенту: установлены
+        // minikube и kubectl, кластер запущен (minikube start), у пользователя
+        // службы Jenkins доступен kubeconfig (при необходимости задайте KUBECONFIG).
+        // Образы собираются локально и загружаются в minikube (minikube image load),
+        // внешний реестр не нужен. Тег образов = номер сборки.
+        stage('Build images for Kubernetes') {
+            when {
+                expression { return isMainBranch() }
+            }
+            steps {
+                retry(3) {
+                    bat 'powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1 -Tag %BUILD_NUMBER%'
+                }
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            when {
+                expression { return isMainBranch() }
+            }
+            steps {
+                bat 'powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deploy.ps1 -Tag %BUILD_NUMBER%'
+            }
+        }
+
+        stage('Smoke test (Kubernetes)') {
+            when {
+                expression { return isMainBranch() }
+            }
+            steps {
+                bat 'powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke.ps1'
+            }
+            post {
+                always {
+                    junit allowEmptyResults: true, testResults: 'reports/results.xml'
+                }
+            }
+        }
+
+        // Публикация образа в Docker Hub: только main и только после успешного
+        // деплоя. Нужны credentials типа "Username with password" с ID dockerhub
+        // (логин Docker Hub + Access Token). Образ: <логин>/car-accounting.
+        stage('Push to Docker Hub') {
+            when {
+                expression { return isMainBranch() }
+            }
+            environment {
+                DOCKERHUB = credentials('dockerhub')
+                IMAGE_REPO = 'car-accounting'
+            }
+            steps {
+                retry(3) {
+                    // Без пробела перед "|": иначе пробел попадёт в пароль.
+                    // "|| exit /b 1" нужен, чтобы bat падал на любой строке, а не только на последней.
+                    bat '''
+                        echo %DOCKERHUB_PSW%| docker login -u %DOCKERHUB_USR% --password-stdin || exit /b 1
+                        docker build -t %DOCKERHUB_USR%/%IMAGE_REPO%:%BUILD_NUMBER% -t %DOCKERHUB_USR%/%IMAGE_REPO%:latest . || exit /b 1
+                        docker push %DOCKERHUB_USR%/%IMAGE_REPO%:%BUILD_NUMBER% || exit /b 1
+                        docker push %DOCKERHUB_USR%/%IMAGE_REPO%:latest || exit /b 1
+                    '''
+                }
+            }
+            post {
+                always {
+                    bat(returnStatus: true, script: 'docker logout')
+                }
+            }
+        }
     }
 
     post {
@@ -185,6 +255,7 @@ pipeline {
                 if (isMainBranch()) {
                     echo 'CI/CD завершён успешно. Приложение запущено в Docker.'
                     echo 'Сайт доступен по адресу http://localhost/'
+                    echo 'Kubernetes: kubectl port-forward -n car-accounting svc/gateway 8082:80, сайт http://localhost:8082/'
                 } else {
                     echo 'CI завершён успешно. Деплой не выполнялся: ветка не main.'
                 }
@@ -193,6 +264,11 @@ pipeline {
 
         failure {
             echo 'Ошибка CI/CD. Проверьте логи этапа, завершившегося с ошибкой.'
+            script {
+                if (isMainBranch()) {
+                    bat(returnStatus: true, script: 'kubectl get pods -n car-accounting')
+                }
+            }
         }
     }
 }

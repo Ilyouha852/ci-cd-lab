@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: car-accounting
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secret
+  namespace: car-accounting
+type: Opaque
+stringData:
+  # Один и тот же ключ у всех реплик: иначе flash-сообщения (подписанная cookie)
+  # не будут читаться, если следующий запрос попадёт на другой под.
+  SECRET_KEY: car-accounting-k8s-change-me

@@ -1,0 +1,27 @@
+# __TAG__ подставляется scripts/deploy.ps1
+# Одноразовая инициализация БД: схема + демо-данные (идемпотентно).
+# Вынесено в Job, чтобы несколько реплик приложения не создавали и не
+# заполняли БД одновременно. deploy.ps1 пересоздаёт Job при каждом деплое.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-init
+  namespace: car-accounting
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: init
+          image: car-accounting/app:__TAG__
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-c", "from database import init_db; init_db()"]
+          env:
+            - {name: DATABASE_PATH, value: /data/cars.db}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: cars-data
