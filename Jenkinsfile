@@ -25,6 +25,8 @@ pipeline {
     environment {
         IMAGE_REPO = 'benjohnson1229/car-accounting'
         IMAGE_TAG  = "${env.BUILD_NUMBER}"
+        MINIKUBE_HOME = 'C:\\Users\\ILYOUSHA'
+        KUBECONFIG    = 'C:\\Users\\ILYOUSHA\\.kube\\config'
     }
 
     triggers {
