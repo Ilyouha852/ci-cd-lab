@@ -10,9 +10,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-ENV DATABASE_PATH=/data/cars.db
+ENV DATABASE_PATH=/data/cars_service.db
 
 EXPOSE 5000
 
+# Схему БД создаёт init_db() при старте (в Kubernetes это делает Job db-init-cars,
+# а Deployment переопределяет command и запускает только gunicorn).
 CMD ["sh", "-c", "python -c 'from database import init_db; init_db()' && exec gunicorn --bind 0.0.0.0:5000 --workers 2 --access-logfile - --error-logfile - app:app"]
- 

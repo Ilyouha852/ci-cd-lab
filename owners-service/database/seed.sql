@@ -1,0 +1,2 @@
+-- id 1..3 используются в демо-данных cars-service (cars.owner_id).
+INSERT INTO owners(full_name,phone,email,address) VALUES('Иванов Иван Иванович','+7 900 111-11-11','ivanov@example.com','Москва, ул. Ленина, 10'),('Петров Пётр Петрович','+7 900 222-22-22','petrov@example.com','Санкт-Петербург, Невский пр., 20'),('Сидорова Анна Сергеевна','+7 900 333-33-33','sidorova@example.com','Казань, ул. Баумана, 15');

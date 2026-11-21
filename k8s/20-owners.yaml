@@ -2,35 +2,36 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: car-app
+  name: owners-service
   namespace: car-accounting
 spec:
-  # Две реплики делят один PVC с SQLite. Это допустимо только в однонодовом
-  # лабораторном кластере (minikube): все поды на одном узле, блокировки файла
-  # SQLite работают. Для многонодового кластера нужна клиент-серверная СУБД.
+  # Две реплики делят один PVC с SQLite своего сервиса. Это допустимо только в
+  # однонодовом лабораторном кластере (minikube): все поды на одном узле, блокировки
+  # файла SQLite работают. Для многонодового кластера нужна клиент-серверная СУБД.
   replicas: 2
   selector:
     matchLabels:
-      app: car-app
+      app: owners-service
   strategy:
     type: RollingUpdate
     rollingUpdate: {maxUnavailable: 0, maxSurge: 1}   # обновление без простоя
   template:
     metadata:
       labels:
-        app: car-app
+        app: owners-service
     spec:
       containers:
         - name: app
-          image: car-accounting/app:__TAG__
+          image: car-accounting/owners-service:__TAG__
           imagePullPolicy: IfNotPresent
-          # Схему БД создаёт Job db-init, поэтому init_db() из CMD образа не нужен.
+          # Схему БД создаёт Job db-init-owners, поэтому init_db() из CMD образа не нужен.
           command: ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2",
                     "--access-logfile", "-", "--error-logfile", "-", "app:app"]
           ports:
             - containerPort: 5000
           env:
-            - {name: DATABASE_PATH, value: /data/cars.db}
+            - {name: DATABASE_PATH, value: /data/owners_service.db}
+            - {name: CARS_SERVICE_URL, value: "http://cars-service:5000"}
             - name: SECRET_KEY
               valueFrom: {secretKeyRef: {name: app-secret, key: SECRET_KEY}}
           volumeMounts:
@@ -49,16 +50,16 @@ spec:
       volumes:
         - name: data
           persistentVolumeClaim:
-            claimName: cars-data
+            claimName: owners-data
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: car-app
+  name: owners-service
   namespace: car-accounting
 spec:
   selector:
-    app: car-app
+    app: owners-service
   ports:
-    - port: 80
+    - port: 5000        # тот же порт, что у контейнера: gateway и сервисы обращаются к owners-service:5000
       targetPort: 5000

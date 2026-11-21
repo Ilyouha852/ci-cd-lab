@@ -28,19 +28,26 @@ pipeline {
 
         stage('Install dependencies') {
             steps {
-                bat 'python -m pip install -r requirements.txt'
+                bat 'python -m pip install -r cars-service/requirements.txt -r owners-service/requirements.txt'
             }
         }
 
+        // тесты каждого сервиса - отдельным процессом из своей папки
         stage('Tests') {
             steps {
-                bat 'python -m pytest tests -v'
+                dir('cars-service') {
+                    bat 'python -m pytest tests -v'
+                }
+                dir('owners-service') {
+                    bat 'python -m pytest tests -v'
+                }
             }
         }
 
         stage('Python syntax check') {
             steps {
-                bat 'python -m py_compile app.py database.py config.py'
+                bat 'python -m py_compile cars-service/app.py cars-service/clients.py cars-service/database.py cars-service/config.py'
+                bat 'python -m py_compile owners-service/app.py owners-service/clients.py owners-service/database.py owners-service/config.py'
             }
         }
 
@@ -50,18 +57,19 @@ pipeline {
             }
         }
 
-        stage('Build Docker image (CI only)') {
+        stage('Build Docker images (CI only)') {
             steps {
                 script {
                     def branchTag = (env.BRANCH_NAME ?: 'manual')
                         .toLowerCase()
                         .replaceAll(/[^a-z0-9_.-]/, '-')
 
-                    env.CI_IMAGE_TAG =
-                        "car-accounting-ci:${branchTag}-${env.BUILD_NUMBER}"
+                    env.CI_IMAGE_TAG = "${branchTag}-${env.BUILD_NUMBER}"
                 }
 
-                bat "\"%DOCKER_EXE%\" build -t \"${env.CI_IMAGE_TAG}\" ."
+                bat "\"%DOCKER_EXE%\" build -t car-accounting-ci/cars-service:${env.CI_IMAGE_TAG} cars-service"
+                bat "\"%DOCKER_EXE%\" build -t car-accounting-ci/owners-service:${env.CI_IMAGE_TAG} owners-service"
+                bat "\"%DOCKER_EXE%\" build -t car-accounting-ci/gateway:${env.CI_IMAGE_TAG} gateway"
             }
         }
     }

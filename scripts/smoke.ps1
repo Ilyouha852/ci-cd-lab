@@ -1,5 +1,5 @@
 ﻿# Поднимает port-forward к gateway, запускает smoke-тест и закрывает port-forward.
-# Нужны Python и pytest (python -m pip install -r requirements.txt).
+# Нужны Python и pytest (python -m pip install -r cars-service/requirements.txt).
 $ErrorActionPreference = "Stop"
 Set-Location (Split-Path $PSScriptRoot -Parent)
 if (-not (Test-Path reports)) { New-Item -ItemType Directory reports | Out-Null }
@@ -14,9 +14,12 @@ try {
     }
     if (-not $ok) { throw "gateway is not reachable on localhost:8082" }
 
-    # сколько реплик приложения ожидаем увидеть в балансировке
-    $replicas = kubectl get deployment car-app -n car-accounting -o jsonpath="{.status.readyReplicas}"
-    if (-not $replicas) { $replicas = "1" }
+    # сколько реплик каждого сервиса ожидаем увидеть в балансировке (берём меньшее)
+    $counts = foreach ($d in "cars-service", "owners-service") {
+        $n = kubectl get deployment $d -n car-accounting -o jsonpath="{.status.readyReplicas}"
+        if ($n) { [int]$n } else { 1 }
+    }
+    $replicas = ($counts | Measure-Object -Minimum).Minimum
 
     $env:BASE_URL = "http://localhost:8082"
     $env:EXPECT_REPLICAS = $replicas

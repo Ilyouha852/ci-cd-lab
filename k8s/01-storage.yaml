@@ -1,8 +1,20 @@
-# Том с файлом SQLite (/data/cars.db). Переживает пересоздание подов.
+# Отдельный том на каждый сервис: у каждого сервиса своя БД (SQLite-файл).
+# Переживают пересоздание подов.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: cars-data
+  namespace: car-accounting
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: owners-data
   namespace: car-accounting
 spec:
   accessModes: ["ReadWriteOnce"]

@@ -1,6 +1,8 @@
 """
 Сквозной smoke-тест приложения «Учёт автомобилей», развёрнутого в Kubernetes.
-Запросы идут через gateway (nginx) -> car-app -> SQLite на PVC.
+Запросы идут через gateway (nginx), который направляет их в один из двух сервисов:
+/owners/ и /api/owners -> owners-service, всё остальное -> cars-service.
+У каждого сервиса своя БД (SQLite на своём PVC).
 
 Запуск (через scripts/smoke.ps1 или вручную при поднятом port-forward):
     BASE_URL=http://localhost:8082 python -m pytest smoke_tests --junitxml=reports/results.xml
@@ -9,6 +11,7 @@
 не пытается ходить в кластер. Используется только стандартная библиотека.
 """
 import http.cookiejar
+import json
 import os
 import re
 import unittest
@@ -78,11 +81,19 @@ class CarAccountingSmokeTest(unittest.TestCase):
         self.assertTrue(headers.get("X-Gateway"), "gateway не вернул X-Gateway")
 
     def test_app_probes_through_gateway(self):
+        # /health и /ready через gateway попадают в cars-service
         status, body, headers = self.c.get("/health")
         self.assertEqual(status, 200)
-        self.assertIn('"status":"ok"', body)
+        self.assertIn('"service":"cars-service"', body.replace(" ", ""))
         self.assertTrue(headers.get("X-Served-By"), "приложение не вернуло X-Served-By")
         self.assertEqual(self.c.get("/ready")[0], 200)
+
+    def test_owners_service_through_gateway(self):
+        status, body, headers = self.c.get("/api/owners/count")
+        self.assertEqual(status, 200)
+        self.assertGreaterEqual(json.loads(body)["count"], 3)
+        self.assertTrue(headers.get("X-Served-By"), "owners-service не вернул X-Served-By")
+        self.assertEqual(self.c.get("/api/owners/999999")[0], 404)
 
     def test_pages(self):
         status, body, _ = self.c.get("/")
@@ -93,17 +104,27 @@ class CarAccountingSmokeTest(unittest.TestCase):
         self.assertEqual(self.c.get("/nope/")[0], 404)
 
     def test_seed_data_present(self):
-        # демо-данные создаёт Job db-init
+        # демо-данные создают Job'ы db-init-cars и db-init-owners
         _, page, _ = self.c.get("/brands/")
         for brand in ("Toyota", "BMW", "Lada", "Honda"):
             self.assertIn(brand, page)
+        _, page, _ = self.c.get("/owners/")
+        self.assertIn("Иванов Иван Иванович", page)
+        # имя владельца в списке автомобилей приходит из owners-service
+        _, page, _ = self.c.get("/cars/")
+        self.assertIn("Иванов Иван Иванович", page)
 
     def test_load_balancing(self):
-        pods = {self.c.get("/health")[2].get("X-Served-By") for _ in range(30)}
-        pods.discard(None)
-        self.assertGreaterEqual(len(pods), min(EXPECT_REPLICAS, 2),
-                                f"запросы обслужили поды {pods}, ожидалось реплик: {EXPECT_REPLICAS}")
-        print(f"\nPods that served requests: {sorted(pods)}")
+        cars = {self.c.get("/health")[2].get("X-Served-By") for _ in range(30)}
+        owners = {self.c.get("/api/owners/count")[2].get("X-Served-By") for _ in range(30)}
+        cars.discard(None)
+        owners.discard(None)
+        want = min(EXPECT_REPLICAS, 2)
+        self.assertGreaterEqual(len(cars), want, f"cars-service: поды {cars}, ожидалось реплик: {EXPECT_REPLICAS}")
+        self.assertGreaterEqual(len(owners), want, f"owners-service: поды {owners}, ожидалось реплик: {EXPECT_REPLICAS}")
+        # это два разных сервиса: наборы подов не пересекаются
+        self.assertFalse(cars & owners, "один и тот же под ответил за оба сервиса")
+        print(f"\ncars-service pods: {sorted(cars)}\nowners-service pods: {sorted(owners)}")
 
     def test_owner_crud(self):
         name = f"Смоук Владелец {self.tag}"
@@ -152,6 +173,34 @@ class CarAccountingSmokeTest(unittest.TestCase):
         self.assertEqual(self.c.get(f"/cars/{car_id}")[0], 404)
         _, page, _ = self.c.get("/insurance/")
         self.assertNotIn(policy, page)
+
+    def test_unknown_owner_rejected_by_cars_service(self):
+        # cars-service проверяет владельца запросом к owners-service
+        brand_id = self.create("brands", f"SmokeBrand{self.tag}", name=f"SmokeBrand{self.tag}")
+        model_id = self.create("models", f"SmokeModel{self.tag}", brand_id=brand_id, name=f"SmokeModel{self.tag}")
+        reg = f"U{self.tag}"
+        status, page, _ = self.c.post("/cars/create", owner_id=999999, brand_id=brand_id, model_id=model_id,
+                                      registration_number=reg, vin=f"UNK{self.tag}{self.tag}"[:17].ljust(17, "0"),
+                                      production_year=2024, color="Синий", mileage=1, status="Активен")
+        self.assertEqual(status, 200)
+        self.assertIn("Владелец не найден", page)
+        self.assertNotIn(reg, self.c.get("/cars/")[1])
+
+    def test_owner_with_cars_cannot_be_deleted(self):
+        # owners-service спрашивает cars-service, есть ли у владельца автомобили
+        brand = f"SmokeBrand{self.tag}"
+        owner = f"Смоук Владелец {self.tag}"
+        reg = f"D{self.tag}"
+        brand_id = self.create("brands", brand, name=brand)
+        model_id = self.create("models", f"SmokeModel{self.tag}", brand_id=brand_id, name=f"SmokeModel{self.tag}")
+        owner_id = self.create("owners", owner, full_name=owner, phone="", email="", address="")
+        self.create("cars", reg, owner_id=owner_id, brand_id=brand_id, model_id=model_id,
+                    registration_number=reg, vin=f"DEL{self.tag}{self.tag}"[:17].ljust(17, "0"),
+                    production_year=2024, color="Синий", mileage=1000, status="Активен")
+        status, page, _ = self.c.post(f"/owners/{owner_id}/delete")
+        self.assertEqual(status, 200)
+        self.assertIn("Удаление невозможно", page)
+        self.assertIn(owner, page)
 
     def test_delete_restricted_when_referenced(self):
         brand = f"SmokeBrand{self.tag}"

@@ -2,8 +2,12 @@
 //   * любая ветка, кроме main: установка зависимостей, тесты, проверка и сборка
 //     отдельного CI-образа с уникальным тегом. Деплоя нет, работающее
 //     приложение не затрагивается;
-//   * ветка main: те же проверки + сборка и деплой через Docker Compose,
-//     затем сборка образов, деплой в Kubernetes (minikube) и smoke-тест через gateway.
+//   * ветка main: те же проверки + сборка, публикация на Docker Hub и деплой через
+//     Docker Compose, затем сборка образов, деплой в Kubernetes (minikube) и
+//     smoke-тест через gateway.
+//
+// Приложение состоит из двух сервисов (cars-service, owners-service) и gateway;
+// у каждого свой Dockerfile, свои тесты и свой образ.
 //
 // Запускать как Multibranch Pipeline (см. README, раздел "Jenkins").
 
@@ -23,6 +27,7 @@ pipeline {
     }
 
     environment {
+        // Образы: ${IMAGE_REPO}-cars-service, ${IMAGE_REPO}-owners-service, ${IMAGE_REPO}-gateway
         IMAGE_REPO = 'benjohnson1229/car-accounting'
         IMAGE_TAG  = "${env.BUILD_NUMBER}"
         MINIKUBE_HOME = 'C:\\Users\\ILYOUSHA'
@@ -53,26 +58,39 @@ pipeline {
 
         stage('Install dependencies') {
             steps {
-                bat 'python -m pip install -r requirements.txt'
+                bat 'python -m pip install -r cars-service/requirements.txt -r owners-service/requirements.txt'
             }
         }
 
-        stage('Run tests') {
+        // Модули сервисов называются одинаково (app.py, database.py...), поэтому
+        // тесты каждого сервиса запускаются отдельным процессом из своей папки.
+        stage('Test cars-service') {
             steps {
-                bat 'python -m pytest tests -v'
+                dir('cars-service') {
+                    bat 'python -m pytest tests -v'
+                }
+            }
+        }
+
+        stage('Test owners-service') {
+            steps {
+                dir('owners-service') {
+                    bat 'python -m pytest tests -v'
+                }
             }
         }
 
         stage('Build') {
             steps {
-                bat 'python -m py_compile app.py database.py config.py'
+                bat 'python -m py_compile cars-service/app.py cars-service/clients.py cars-service/database.py cars-service/config.py'
+                bat 'python -m py_compile owners-service/app.py owners-service/clients.py owners-service/database.py owners-service/config.py'
                 bat 'docker compose config -q'
             }
         }
 
-        // Не main: образ с уникальным тегом, чтобы не перезаписать образ
-        // caraccounting-app, который использует развернутое приложение.
-        stage('Build CI Docker image') {
+        // Не main: образы с уникальным тегом, чтобы не перезаписать образы
+        // работающего приложения.
+        stage('Build CI Docker images') {
             when {
                 not {
                     expression { return isMainBranch() }
@@ -84,12 +102,14 @@ pipeline {
                         .toLowerCase()
                         .replaceAll(/[^a-z0-9_.-]/, '-')
 
-                    env.CI_IMAGE_TAG = "car-accounting-ci:${branchTag}-${env.BUILD_NUMBER}"
+                    env.CI_IMAGE_TAG = "${branchTag}-${env.BUILD_NUMBER}"
                 }
 
                 // Docker Hub иногда отвечает TLS handshake timeout, поэтому повторы.
                 retry(3) {
-                    bat "docker build -t \"${env.CI_IMAGE_TAG}\" ."
+                    bat "docker build -t car-accounting-ci/cars-service:${env.CI_IMAGE_TAG} cars-service"
+                    bat "docker build -t car-accounting-ci/owners-service:${env.CI_IMAGE_TAG} owners-service"
+                    bat "docker build -t car-accounting-ci/gateway:${env.CI_IMAGE_TAG} gateway"
                 }
             }
         }
@@ -107,17 +127,20 @@ pipeline {
             }
 
             steps {
-                // Сборка образа и публикация на Docker Hub.
+                // Сборка трёх образов (cars-service, owners-service, gateway) и
+                // публикация на Docker Hub: тег = номер сборки и latest.
                 // В bat код возврата берётся только от последней команды,
                 // поэтому после каждой стоит || exit /b 1.
                 retry(2) {
                     bat '''
                         @echo off
                         echo %DOCKERHUB_PSW%| docker login -u %DOCKERHUB_USR% --password-stdin || exit /b 1
-                        docker compose -p caraccounting build app || exit /b 1
-                        docker compose -p caraccounting push app || exit /b 1
-                        docker tag %IMAGE_REPO%:%IMAGE_TAG% %IMAGE_REPO%:latest || exit /b 1
-                        docker push %IMAGE_REPO%:latest || exit /b 1
+                        docker compose -p caraccounting build cars-service owners-service gateway || exit /b 1
+                        docker compose -p caraccounting push cars-service owners-service gateway || exit /b 1
+                        for %%S in (cars-service owners-service gateway) do (
+                            docker tag %IMAGE_REPO%-%%S:%IMAGE_TAG% %IMAGE_REPO%-%%S:latest || exit /b 1
+                            docker push %IMAGE_REPO%-%%S:latest || exit /b 1
+                        )
                     '''
                 }
 
@@ -125,9 +148,11 @@ pipeline {
                     $ErrorActionPreference = "Stop"
                     Set-Location $env:WORKSPACE
 
-                    Write-Host "Starting application and Nginx..."
+                    Write-Host "Starting cars-service, owners-service and gateway..."
 
-                    docker compose -p caraccounting up -d
+                    # --remove-orphans убирает контейнеры прежней версии (app, nginx):
+                    # иначе старый nginx продолжит занимать порт 80.
+                    docker compose -p caraccounting up -d --remove-orphans
                     if ($LASTEXITCODE -ne 0) {
                         throw "Docker Compose deployment failed"
                     }
@@ -140,12 +165,13 @@ pipeline {
                         Start-Sleep -Seconds 2
 
                         try {
-                            $response = Invoke-WebRequest `
-                                -Uri "http://localhost/" `
-                                -TimeoutSec 3 `
-                                -UseBasicParsing
+                            # главная и список автомобилей отдаёт cars-service,
+                            # /owners/ - owners-service: проверяем оба сервиса через gateway
+                            $codes = foreach ($u in "http://localhost/", "http://localhost/owners/") {
+                                (Invoke-WebRequest -Uri $u -TimeoutSec 3 -UseBasicParsing).StatusCode
+                            }
 
-                            if ($response.StatusCode -eq 200) {
+                            if (($codes | Where-Object { $_ -ne 200 }).Count -eq 0) {
                                 $ready = $true
                                 break
                             }
@@ -207,36 +233,6 @@ pipeline {
                 }
             }
         }
-
-        // Публикация образа в Docker Hub: только main и только после успешного
-        // деплоя. Нужны credentials типа "Username with password" с ID dockerhub
-        // (логин Docker Hub + Access Token). Образ: <логин>/car-accounting.
-        stage('Push to Docker Hub') {
-            when {
-                expression { return isMainBranch() }
-            }
-            environment {
-                DOCKERHUB = credentials('dockerhub')
-                IMAGE_REPO = 'car-accounting'
-            }
-            steps {
-                retry(3) {
-                    // Без пробела перед "|": иначе пробел попадёт в пароль.
-                    // "|| exit /b 1" нужен, чтобы bat падал на любой строке, а не только на последней.
-                    bat '''
-                        echo %DOCKERHUB_PSW%| docker login -u %DOCKERHUB_USR% --password-stdin || exit /b 1
-                        docker build -t %DOCKERHUB_USR%/%IMAGE_REPO%:%BUILD_NUMBER% -t %DOCKERHUB_USR%/%IMAGE_REPO%:latest . || exit /b 1
-                        docker push %DOCKERHUB_USR%/%IMAGE_REPO%:%BUILD_NUMBER% || exit /b 1
-                        docker push %DOCKERHUB_USR%/%IMAGE_REPO%:latest || exit /b 1
-                    '''
-                }
-            }
-            post {
-                always {
-                    bat(returnStatus: true, script: 'docker logout')
-                }
-            }
-        }
     }
 
     post {
@@ -245,9 +241,11 @@ pipeline {
                 if (isMainBranch()) {
                     bat(returnStatus: true, script: 'docker logout')
                 }
-                // CI-образ нужен только для проверки сборки, не копим их на диске.
+                // CI-образы нужны только для проверки сборки, не копим их на диске.
                 if (env.CI_IMAGE_TAG) {
-                    bat(returnStatus: true, script: "docker image rm -f \"${env.CI_IMAGE_TAG}\"")
+                    for (svc in ['cars-service', 'owners-service', 'gateway']) {
+                        bat(returnStatus: true, script: "docker image rm -f car-accounting-ci/${svc}:${env.CI_IMAGE_TAG}")
+                    }
                 }
             }
         }
